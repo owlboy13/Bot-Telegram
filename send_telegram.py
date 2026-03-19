@@ -12,10 +12,10 @@ from telethon.errors import PeerFloodError, UserPrivacyRestrictedError
 
 load_dotenv()
 
-API_ID = int(os.getenv('API_ID_FINANCEIRO'))
-API_HASH = os.getenv('API_HASH_FINANCEIRO')
+API_ID = int(os.getenv('API_IDO'))
+API_HASH = os.getenv('API_HASH')
 MESSAGE = os.getenv('FILE_TEXT')
-SENDERPHONE = os.getenv('SENDERPHONE_FINANCEIRO')
+SENDERPHONE = os.getenv('SENDERPHONE')
 
 BASE_DIR = Path(__file__).parent
 CAMINHO_PLANILHA = os.path.join(BASE_DIR, "dados_contacts.xlsx")

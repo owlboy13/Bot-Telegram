@@ -4,3 +4,4 @@ config.json
 message.txt
 session.session
 dados_contacts.xlsx
+bot_telegram.py
