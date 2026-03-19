@@ -12,7 +12,7 @@ from telethon.errors import PeerFloodError, UserPrivacyRestrictedError
 
 load_dotenv()
 
-API_ID = int(os.getenv('API_IDO'))
+API_ID = int(os.getenv('API_ID'))
 API_HASH = os.getenv('API_HASH')
 MESSAGE = os.getenv('FILE_TEXT')
 SENDERPHONE = os.getenv('SENDERPHONE')
