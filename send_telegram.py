@@ -12,10 +12,10 @@ from telethon.errors import PeerFloodError, UserPrivacyRestrictedError
 
 load_dotenv()
 
-API_ID = int(os.getenv('API_ID'))
-API_HASH = os.getenv('API_HASH')
+API_ID = os.getenv('API_ID_FINANCEIRO')
+API_HASH = os.getenv('API_HASH_FINANCEIRO')
 MESSAGE = os.getenv('FILE_TEXT')
-SENDERPHONE = os.getenv('SENDERPHONE')
+SENDERPHONE = os.getenv('SENDERPHONE_FINANCEIRO')
 
 BASE_DIR = Path(__file__).parent
 CAMINHO_PLANILHA = os.path.join(BASE_DIR, "dados_contacts.xlsx")
@@ -64,43 +64,57 @@ class BotTelegram:
         await client(ImportContactsRequest([contact]))
 
     async def connection_telegram(self):
-        async with TelegramClient('session', self._api_id, self._api_hash) as client:
-            await client.start(phone=SENDERPHONE)
+        client = TelegramClient('session_empresa', self._api_id, self._api_hash)
 
-            df = self.config_data_contacts()
+        await client.connect()
+        print("Conectado ao servidor Telegram!")
 
-            for index, (_, row) in enumerate(df.iterrows()):
-                phone = row['TELEFONE']
-                name = row['NOME']
+        if not await client.is_user_authorized():
+            print("Não autenticado. Solicitando código...")
+            sent = await client.send_code_request(SENDERPHONE)
+            print(f"Código enviado! Tipo: {sent.type}")
+    
+            code = input("Digite o código recebido no Telegram: ")
+            try:
+                await client.sign_in(SENDERPHONE, code)
+                print("Autenticado com sucesso!")
+            except Exception:
+                senha = input("Digite sua senha 2FA (se tiver): ")
+                await client.sign_in(password=senha)
+        else:
+            print("Sessão já válida, sem necessidade de novo código.")
 
-                try:
-                    # 1. Importa o contato
-                    await self.import_contact(client, phone, name)
+        # Resto do envio igual ao original
+        df = self.config_data_contacts()
 
-                    # 2. Resolve a entidade
-                    entity = await client.get_entity(phone)
+        for index, (_, row) in enumerate(df.iterrows()):
+            phone = row['TELEFONE']
+            name = row['NOME']
 
-                    # 3. Envia a mensagem
-                    await client.send_message(entity, self._message, parse_mode='html')
-                    print(f"Mensagem enviada para: {name} ({phone})")
+            try:
+                await self.import_contact(client, phone, name)
+                entity = await client.get_entity(phone)
+                await client.send_message(entity, self._message, parse_mode='html')
+                print(f"Mensagem enviada para: {name} ({phone})")
 
-                except PeerFloodError:
-                    print("Flood detectado! Aguardando 60s...")
-                    await asyncio.sleep(60)
+            except PeerFloodError:
+                print("Flood detectado! Aguardando 60s...")
+                await asyncio.sleep(60)
 
-                except UserPrivacyRestrictedError:
-                    print(f"{name} bloqueou mensagens de desconhecidos")
+            except UserPrivacyRestrictedError:
+                print(f"{name} bloqueou mensagens de desconhecidos")
 
-                except Exception as e:
-                    print(f"Erro ao enviar para {name}: {e}")
+            except Exception as e:
+                print(f"Erro ao enviar para {name}: {e}")
 
-                await asyncio.sleep(random.randint(5, 15))
+            await asyncio.sleep(random.randint(5, 15))
 
-                if (index + 1) % 20 == 0:
-                    print(" Pausa de 5 minutos")
-                    await asyncio.sleep(300)
+            if (index + 1) % 20 == 0:
+                print("Pausa de 5 minutos")
+                await asyncio.sleep(300)
 
-            print("\nEnvio finalizado!")
+        print("\nEnvio finalizado!")
+        await client.disconnect()
 
 
 async def start():

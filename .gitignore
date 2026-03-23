@@ -5,3 +5,6 @@ message.txt
 session.session
 dados_contacts.xlsx
 bot_telegram.py
+__pycache__
+teste_auth.py
+*.session
