@@ -8,13 +8,13 @@ from dotenv import load_dotenv
 from telethon import TelegramClient
 from telethon.tl.functions.contacts import ImportContactsRequest
 from telethon.tl.types import InputPhoneContact
-from telethon.errors import PeerFloodError, UserPrivacyRestrictedError
+from telethon.errors import PeerFloodError, UserPrivacyRestrictedError, FloodWaitError
 
 load_dotenv()
 
 API_ID = os.getenv('API_ID_FINANCEIRO')
 API_HASH = os.getenv('API_HASH_FINANCEIRO')
-MESSAGE = os.getenv('FILE_TEXT')
+MESSAGE = os.getenv('FILE_TEXT_GENERAL')
 SENDERPHONE = os.getenv('SENDERPHONE_FINANCEIRO')
 
 BASE_DIR = Path(__file__).parent
@@ -46,6 +46,8 @@ class BotTelegram:
         df['TELEFONE'] = df['TELEFONE'].astype(str).apply(
             lambda x: "+" + re.sub(r'[^0-9]', '', x)
         )
+        if 'status' not in df.columns:
+            df['status'] = ''
 
         print("\nContatos carregados:")
         for _, row in df.iterrows():
@@ -53,15 +55,36 @@ class BotTelegram:
 
         return df
 
-    async def import_contact(self, client, phone, name):
-        """Importa o contato na lista do Telegram antes de enviar"""
-        contact = InputPhoneContact(
-            client_id=0,
-            phone=phone,
-            first_name=name,
-            last_name=""
-        )
-        await client(ImportContactsRequest([contact]))
+    async def import_contacts_batch(self, client, df):
+        """
+        Importa TODOS os contatos de uma vez antes de iniciar os envios.
+        Isso evita chamar ImportContactsRequest a cada mensagem.
+        """
+        print("\nImportando todos os contatos em batch...")
+        contacts = [
+            InputPhoneContact(
+                client_id=i,
+                phone=row['TELEFONE'],
+                first_name=str(row['NOME']),
+                last_name=""
+            )
+            for i, (_, row) in enumerate(df.iterrows())
+        ]
+
+        # Importa em lotes de 25 para não sobrecarregar
+        batch_size = 25
+        for i in range(0, len(contacts), batch_size):
+            batch = contacts[i:i + batch_size]
+            try:
+                await client(ImportContactsRequest(batch))
+                print(f"  Lote {i // batch_size + 1} importado ({len(batch)} contatos)")
+                await asyncio.sleep(5)  # Pausa entre lotes de importação
+            except FloodWaitError as e:
+                print(f"  FloodWait na importação! Aguardando {e.seconds}s...")
+                await asyncio.sleep(e.seconds + 5)
+                await client(ImportContactsRequest(batch))  # Tenta novamente
+
+        print("Todos os contatos importados!\n")
 
     async def connection_telegram(self):
         client = TelegramClient('session_empresa', self._api_id, self._api_hash)
@@ -73,7 +96,7 @@ class BotTelegram:
             print("Não autenticado. Solicitando código...")
             sent = await client.send_code_request(SENDERPHONE)
             print(f"Código enviado! Tipo: {sent.type}")
-    
+
             code = input("Digite o código recebido no Telegram: ")
             try:
                 await client.sign_in(SENDERPHONE, code)
@@ -84,36 +107,66 @@ class BotTelegram:
         else:
             print("Sessão já válida, sem necessidade de novo código.")
 
-        # Resto do envio igual ao original
         df = self.config_data_contacts()
+
+        await self.import_contacts_batch(client, df)
+
+        status_list = []
 
         for index, (_, row) in enumerate(df.iterrows()):
             phone = row['TELEFONE']
             name = row['NOME']
+            status = ''
 
             try:
-                await self.import_contact(client, phone, name)
+                # get_entity agora funciona pois o contato já foi importado
                 entity = await client.get_entity(phone)
                 await client.send_message(entity, self._message, parse_mode='html')
-                print(f"Mensagem enviada para: {name} ({phone})")
+                print(f"[{index + 1}] Mensagem enviada para: {name} ({phone})")
+                status = 'enviado'
+
+            except FloodWaitError as e:
+                wait = e.seconds + 10
+                print(f"[{index + 1}] FloodWait! Aguardando {wait}s antes de continuar...")
+                await asyncio.sleep(wait)
+                try:
+                    entity = await client.get_entity(phone)
+                    await client.send_message(entity, self._message, parse_mode='html')
+                    print(f"[{index + 1}] Enviado após FloodWait: {name} ({phone})")
+                    status = 'enviado'
+                except Exception as e2:
+                    print(f"[{index + 1}] Falhou após FloodWait para {name}: {e2}")
+                    status = f'erro: {e2}'
 
             except PeerFloodError:
-                print("Flood detectado! Aguardando 60s...")
-                await asyncio.sleep(60)
+                print(f"[{index + 1}] PeerFlood! Pausa de 5 minutos...")
+                await asyncio.sleep(300)
+                status = 'erro: peer flood'
 
             except UserPrivacyRestrictedError:
-                print(f"{name} bloqueou mensagens de desconhecidos")
+                print(f"[{index + 1}] {name} bloqueou mensagens de desconhecidos")
+                status = 'bloqueado por privacidade'
 
             except Exception as e:
-                print(f"Erro ao enviar para {name}: {e}")
+                print(f"[{index + 1}] Erro ao enviar para {name}: {e}")
+                status = f'erro: {e}'
 
-            await asyncio.sleep(random.randint(5, 15))
+            status_list.append(status)
 
-            if (index + 1) % 20 == 0:
-                print("Pausa de 5 minutos")
-                await asyncio.sleep(300)
+            # Delay entre mensagens (mais humano)
+            delay = random.randint(10, 20)
+            print(f"  Aguardando {delay}s até o próximo envio...")
+            await asyncio.sleep(delay)
 
-        print("\nEnvio finalizado!")
+            # Pausa a cada 40 Mensagens
+            if (index + 1) % 40 == 0:
+                print(f"\nPausa de 5 minutos após {index + 1} envios...\n")
+                await asyncio.sleep(120)
+
+        df['status'] = status_list
+        df.to_excel('resultado.xlsx', index=False)
+
+        print("\nEnvio finalizado! Resultado salvo em resultado.xlsx")
         await client.disconnect()
 
 
